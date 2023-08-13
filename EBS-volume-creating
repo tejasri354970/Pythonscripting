@@ -1,0 +1,19 @@
+import boto3
+
+# Create a boto3 client for EC2
+ec2 = boto3.client('ec2')
+
+def create_volume(size_gb, availability_zone):
+    try:
+        response = ec2.create_volume(
+            Size=size_gb,
+            AvailabilityZone=availability_zone
+        )
+        print(f"Volume created: {response['VolumeId']}")
+        return response['VolumeId']
+    except Exception as e:
+        print(f"Error creating volume: {str(e)}")
+        return None
+
+# Call the function to create a volume with desired size (in GB) and availability zone
+created_volume_id = create_volume(size_gb=50, availability_zone='ap-south-1a')
