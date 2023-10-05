@@ -1,0 +1,108 @@
+import boto3
+import traceback
+from datetime import datetime, timedelta
+
+# Fetch EC2 instances based on specified tags and state.
+def get_instances_by_tags(ec2, tags, state='running'):
+    # Create filters for the EC2 describe_instances method
+    filters = [{'Name': f'tag:{key}', 'Values': [value]} for key, value in tags.items()]
+    if state:
+        filters.append({'Name': 'instance-state-name', 'Values': [state]})
+    
+    # Describe instances with the specified filters
+    response = ec2.describe_instances(Filters=filters)
+    # Flatten the result to get a list of instances
+    instances = [i for r in response['Reservations'] for i in r['Instances']]
+    return instances
+
+# Main function for Lambda
+def lambda_handler(event, context):
+
+    # List of AWS regions and their corresponding descriptive names
+    regions = [
+        ('us-west-2', 'Oregon(US-WEST-2)'),
+        ('eu-west-1', 'Ireland(EU-WEST-1)'),
+        ('eu-central-1', 'Frankfurt(EU-CENTRAL-1)'),
+        ('eu-west-2', 'London(EU-WEST-2)'),
+        ('ap-south-1', 'Mumbai(AP-SOUTH-1)'),
+        ('ap-southeast-2', 'Sydney(AP-SOUTHEAST-2)'),
+        ('ca-central-1', 'Canada(CA-CENTRAL-1)'),
+        ('ap-southeast-1', 'Singapore(AP-SOUTHEAST-1)')
+    ]
+
+    # Define CloudTrail events of interest
+    event_names = ['StartInstances', 'StopInstances', 'RebootInstances', 'TerminateInstances']
+    # Initialize counters for these events
+    total_event_counts = {name: 0 for name in event_names}
+    total_running_instances = 0
+
+    # Determine date range for events: yesterday
+    yesterday = datetime.now()
+    yesterday = yesterday.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+
+    # Define today's date
+    today = yesterday + timedelta(days=1)
+
+    for region_code, region_name in regions:
+        print("Fetching CloudTrail Events and Running Instances for Region: ", region_name)
+
+        event_counts = {name: 0 for name in event_names}
+        running_instances = 0
+
+        try:
+            # Initialize boto3 clients for CloudTrail and EC2 for each region
+            client = boto3.client('cloudtrail', region_name=region_code)
+            ec2 = boto3.client('ec2', region_name=region_code)
+
+            for event_name in event_names:
+                response = client.lookup_events(
+                    LookupAttributes=[
+                        {
+                            'AttributeKey': 'EventName',
+                            'AttributeValue': event_name
+                        },
+                    ],
+                    StartTime=yesterday,
+                    EndTime=today,
+                    MaxResults=50,
+                )
+
+                # Iterate over CloudTrail events and match against EC2 instances with specific tags
+                for event in response['Events']:
+                    instance_id = event['Resources'][0]['ResourceName']
+                    instance_tags = get_instances_by_tags(ec2, {}, state=None)
+                    for instance in instance_tags:
+                        if instance['InstanceId'] == instance_id:
+                            if any(tag['Key'] == 'app' and tag['Value'] in ['jcc', 'fm'] for tag in instance.get('Tags', [])):
+                                event_counts[event_name] += 1
+                                total_event_counts[event_name] += 1
+                                break
+
+            # Get instances with specific tags for running count
+            instances_with_tags = get_instances_by_tags(ec2, {'app': 'jcc'}) + get_instances_by_tags(ec2, {'app': 'fm'})
+            running_instances += len(instances_with_tags)
+            total_running_instances += running_instances
+
+            # Print region-specific counts
+            print(f"{region_name}\n"
+                  f"Instances start count: {event_counts.get('StartInstances', 0)}\n"
+                  f"Instances stop count: {event_counts.get('StopInstances', 0)}\n"
+                  f"Instances reboot count: {event_counts.get('RebootInstances', 0)}\n"
+                  f"Instances terminate count: {event_counts.get('TerminateInstances', 0)}\n"
+                  f"Total Running Instance count in {region_code}: {running_instances}\n\n")
+
+        except Exception as e:
+            print("Error in fetching CloudTrail Events for Region: ", region_name)
+            print(str(e))
+            print(traceback.format_exc())
+
+    # Print summary
+    print(f"Summary\n"
+          f"Total Instances start count: {total_event_counts.get('StartInstances', 0)}\n"
+          f"Total Instances stop count: {total_event_counts.get('StopInstances', 0)}\n"
+          f"Total Instances reboot count: {total_event_counts.get('RebootInstances', 0)}\n"
+          f"Total Instances terminate count: {total_event_counts.get('TerminateInstances', 0)}\n"
+          f"Total Running Instance count in all regions: {total_running_instances}")
+
+# Uncomment the following line to test the Lambda function locally
+# lambda_handler(None, None)

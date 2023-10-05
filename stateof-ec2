@@ -1,0 +1,20 @@
+import boto3
+
+# Specify the AWS region as a variable
+aws_region = 'ap-south-1'  # Change this to your desired region
+
+# Create an EC2 client for the specified region
+ec2_client = boto3.client('ec2', region_name=aws_region)
+
+# Describe instances in the specified region
+resp = ec2_client.describe_instances()
+
+# Iterate over instances in the response
+for reservation in resp['Reservations']:
+    for instance in reservation['Instances']:
+        instance_id = instance['InstanceId']
+        instance_tags = instance.get('Tags', [])  # Get the instance tags
+        instance_state = instance['State']['Name']  # Get the instance state
+
+        # Print instance ID, region, tags, and state
+        print(f"Instance ID: {instance_id} (Region: {aws_region}) - Tags: {instance_tags} - Status: {instance_state}")
